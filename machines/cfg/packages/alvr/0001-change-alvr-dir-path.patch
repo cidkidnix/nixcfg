@@ -1,0 +1,13 @@
+diff --git a/alvr/launcher/src/commands.rs b/alvr/launcher/src/commands.rs
+index e3fd90b8..efff07a3 100644
+--- a/alvr/launcher/src/commands.rs
++++ b/alvr/launcher/src/commands.rs
+@@ -110,7 +110,7 @@ pub fn unblock_alvr_addon() -> StrResult {
+ 
+ pub fn current_alvr_dir() -> StrResult<PathBuf> {
+     let current_path = trace_err!(env::current_exe())?;
+-    Ok(trace_none!(current_path.parent())?.to_owned())
++    Ok(trace_err!(trace_none!(current_path.parent())?.join("../share/alvr").canonicalize())?)
+ }
+ 
+ pub fn maybe_register_alvr_driver() -> StrResult {

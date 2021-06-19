@@ -1,0 +1,43 @@
+/*
+pre,
+code,
+textarea,
+[class*="textarea"],
+[class*="codeLine"],
+.blob-code,
+.blob-code *,
+.blob-num,
+.code,
+.code *,
+#linenos,
+[class*="inlineCode"],
+[class*="mono"],
+.linedtextarea.lines {
+    font-family: monospace !important;
+    font-size:   15px !important;
+    line-height: 18px !important;
+    font-weight: 600  !important;
+    -webkit-text-stroke: 0 !important;
+}
+
+[class*="body"] code {
+    background-color: transparent !important;
+    padding: 0;
+}
+
+.blob-num {
+    line-height: 1em;
+    vertical-align: middle;
+}
+*/
+
+body {
+    -webkit-text-stroke: 0.2px !important;
+}
+
+* {
+    text-rendering: geometricPrecision !important;
+
+	/* FIREFOX MADE ME DO THIS!!! */
+	scrollbar-width: none !important;
+}

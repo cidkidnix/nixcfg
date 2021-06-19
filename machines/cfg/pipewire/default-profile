@@ -1,0 +1,5 @@
+{
+  "default.profile.alsa_card.usb-GuangZhou_FiiO_Electronics_Co._Ltd_FiiO_K5_Pro-00": { "name": "pro-audio" },
+  "default.profile.alsa_card.usb-Razer_Razer_Nari_Essential-00": { "name": "input:mono-fallback" },
+  "default.profile.alsa_card.pci-0000_29_00.1": { "name": "off" }
+}

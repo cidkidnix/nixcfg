@@ -1,0 +1,298 @@
+diff --git a/panels/display/cc-display-config-dbus.c b/panels/display/cc-display-config-dbus.c
+index aa7c673bee389b4d9ac8d641528235abd26c12fa..b499f9ef37b34fa04cfdac98997273ae8fd2f483 100644
+--- a/panels/display/cc-display-config-dbus.c
++++ b/panels/display/cc-display-config-dbus.c
+@@ -277,7 +277,6 @@ cc_display_logical_monitor_class_init (CcDisplayLogicalMonitorClass *klass)
+   gobject_class->finalize = cc_display_logical_monitor_finalize;
+ }
+ 
+-
+ typedef enum _CcDisplayMonitorUnderscanning
+ {
+   UNDERSCANNING_UNSUPPORTED = 0,
+@@ -285,6 +284,13 @@ typedef enum _CcDisplayMonitorUnderscanning
+   UNDERSCANNING_ENABLED
+ } CcDisplayMonitorUnderscanning;
+ 
++typedef enum _CcDisplayMonitorVariableRefreshRate
++{
++  VRR_UNSUPPORTED = 0,
++  VRR_DISABLED,
++  VRR_ENABLED
++} CcDisplayMonitorVariableRefreshRate;
++
+ struct _CcDisplayMonitorDBus
+ {
+   CcDisplayMonitor parent_instance;
+@@ -300,6 +306,7 @@ struct _CcDisplayMonitorDBus
+   int height_mm;
+   gboolean builtin;
+   CcDisplayMonitorUnderscanning underscanning;
++  CcDisplayMonitorVariableRefreshRate vrr_mode;
+   int max_width;
+   int max_height;
+ 
+@@ -600,6 +607,37 @@ cc_display_monitor_dbus_set_underscanning (CcDisplayMonitor *pself,
+     self->underscanning = UNDERSCANNING_DISABLED;
+ }
+ 
++static gboolean
++cc_display_monitor_dbus_supports_variable_refresh_rate (CcDisplayMonitor *pself)
++{
++  CcDisplayMonitorDBus *self = CC_DISPLAY_MONITOR_DBUS (pself);
++
++  return self->vrr_mode != VRR_UNSUPPORTED;
++}
++
++static gboolean
++cc_display_monitor_dbus_get_variable_refresh_rate (CcDisplayMonitor *pself)
++{
++  CcDisplayMonitorDBus *self = CC_DISPLAY_MONITOR_DBUS (pself);
++
++  return self->vrr_mode == VRR_ENABLED;
++}
++
++static void
++cc_display_monitor_dbus_set_variable_refresh_rate (CcDisplayMonitor *pself,
++                                                   gboolean enabled)
++{
++  CcDisplayMonitorDBus *self = CC_DISPLAY_MONITOR_DBUS (pself);
++
++  if (self->vrr_mode == VRR_UNSUPPORTED)
++    return;
++
++  if (enabled)
++    self->vrr_mode = VRR_ENABLED;
++  else
++    self->vrr_mode = VRR_DISABLED;
++}
++
+ static CcDisplayMode *
+ cc_display_monitor_dbus_get_closest_mode (CcDisplayMonitorDBus *self,
+                                           CcDisplayModeDBus *mode)
+@@ -712,6 +750,7 @@ static void
+ cc_display_monitor_dbus_init (CcDisplayMonitorDBus *self)
+ {
+   self->underscanning = UNDERSCANNING_UNSUPPORTED;
++  self->vrr_mode = VRR_UNSUPPORTED;
+   self->max_width = G_MAXINT;
+   self->max_height = G_MAXINT;
+ }
+@@ -766,6 +805,9 @@ cc_display_monitor_dbus_class_init (CcDisplayMonitorDBusClass *klass)
+   parent_class->supports_underscanning = cc_display_monitor_dbus_supports_underscanning;
+   parent_class->get_underscanning = cc_display_monitor_dbus_get_underscanning;
+   parent_class->set_underscanning = cc_display_monitor_dbus_set_underscanning;
++  parent_class->supports_variable_refresh_rate = cc_display_monitor_dbus_supports_variable_refresh_rate;
++  parent_class->get_variable_refresh_rate = cc_display_monitor_dbus_get_variable_refresh_rate;
++  parent_class->set_variable_refresh_rate = cc_display_monitor_dbus_set_variable_refresh_rate;
+   parent_class->set_mode = cc_display_monitor_dbus_set_mode;
+   parent_class->set_position = cc_display_monitor_dbus_set_position;
+   parent_class->get_scale = cc_display_monitor_dbus_get_scale;
+@@ -840,6 +882,15 @@ cc_display_monitor_dbus_new (GVariant *variant,
+           else
+             self->underscanning = UNDERSCANNING_DISABLED;
+         }
++      else if (g_str_equal (s, "vrr-enabled"))
++        {
++          gboolean vrr_enabled = FALSE;
++          g_variant_get (v, "b", &vrr_enabled);
++          if (vrr_enabled)
++            self->vrr_mode = VRR_ENABLED;
++          else
++            self->vrr_mode = VRR_DISABLED;
++        }
+       else if (g_str_equal (s, "max-screen-size"))
+         {
+           g_variant_get (v, "ii", &self->max_width, &self->max_height);
+@@ -937,6 +988,10 @@ build_monitors_variant (GHashTable *monitors)
+                              "underscanning",
+                              g_variant_new_boolean (monitor->underscanning == UNDERSCANNING_ENABLED));
+ 
++      g_variant_builder_add (&props_builder, "{sv}",
++                             "enable_vrr",
++                             g_variant_new_boolean (monitor->vrr_mode == VRR_ENABLED));
++
+       mode_dbus = CC_DISPLAY_MODE_DBUS (monitor->current_mode);
+       g_variant_builder_add (&builder, "(ss@*)",
+                              monitor->connector_name,
+@@ -1075,6 +1130,9 @@ cc_display_config_dbus_equal (CcDisplayConfig *pself,
+       if (m1->underscanning != m2->underscanning)
+         return FALSE;
+ 
++      if (m1->vrr_mode != m2->vrr_mode)
++        return FALSE;
++
+       if (!cc_display_logical_monitor_equal (m1->logical_monitor, m2->logical_monitor))
+         return FALSE;
+ 
+diff --git a/panels/display/cc-display-config.c b/panels/display/cc-display-config.c
+index 30c97c450f6ae8281aa11b0e4539b012880e245c..44ffd7cae90a1bf1c71affe9c0994fa0762e070b 100644
+--- a/panels/display/cc-display-config.c
++++ b/panels/display/cc-display-config.c
+@@ -322,6 +322,26 @@ cc_display_monitor_set_underscanning (CcDisplayMonitor *self,
+   return CC_DISPLAY_MONITOR_GET_CLASS (self)->set_underscanning (self, underscanning);
+ }
+ 
++gboolean
++cc_display_monitor_supports_variable_refresh_rate (CcDisplayMonitor *self)
++{
++  return CC_DISPLAY_MONITOR_GET_CLASS (self)->supports_variable_refresh_rate (self);
++}
++
++gboolean
++cc_display_monitor_get_variable_refresh_rate (CcDisplayMonitor *self)
++{
++  return CC_DISPLAY_MONITOR_GET_CLASS (self)->get_variable_refresh_rate (self);
++}
++
++void
++cc_display_monitor_set_variable_refresh_rate (CcDisplayMonitor *self,
++                                              gboolean enabled)
++{
++  return CC_DISPLAY_MONITOR_GET_CLASS (self)->set_variable_refresh_rate (self, enabled);
++}
++
++
+ void
+ cc_display_monitor_set_mode (CcDisplayMonitor *self, CcDisplayMode *m)
+ {
+diff --git a/panels/display/cc-display-config.h b/panels/display/cc-display-config.h
+index ef4332ff74f32fa876279b5c19f4f79b952084c9..d638246fa6da43d2b1fe1a37c93d1feef2e96c22 100644
+--- a/panels/display/cc-display-config.h
++++ b/panels/display/cc-display-config.h
+@@ -121,6 +121,10 @@ struct _CcDisplayMonitorClass
+   gboolean          (*get_underscanning)      (CcDisplayMonitor  *self);
+   void              (*set_underscanning)      (CcDisplayMonitor  *self,
+                                                gboolean           u);
++  gboolean          (*supports_variable_refresh_rate) (CcDisplayMonitor *self);
++  gboolean          (*get_variable_refresh_rate)      (CcDisplayMonitor *self);
++  void              (*set_variable_refresh_rate)      (CcDisplayMonitor *self,
++                                                       gboolean          u);
+   CcDisplayMode*    (*get_mode)               (CcDisplayMonitor  *self);
+   CcDisplayMode*    (*get_preferred_mode)     (CcDisplayMonitor  *self);
+   GList*            (*get_modes)              (CcDisplayMonitor  *self);
+@@ -211,6 +215,11 @@ gboolean          cc_display_monitor_get_underscanning      (CcDisplayMonitor  *
+ void              cc_display_monitor_set_underscanning      (CcDisplayMonitor  *monitor,
+                                                              gboolean           underscanning);
+ 
++gboolean          cc_display_monitor_supports_variable_refresh_rate (CcDisplayMonitor *monitor);
++gboolean          cc_display_monitor_get_variable_refresh_rate      (CcDisplayMonitor *monitor);
++void              cc_display_monitor_set_variable_refresh_rate      (CcDisplayMonitor *monitor,
++                                                                     gboolean          enabled);
++
+ CcDisplayMode*    cc_display_monitor_get_mode               (CcDisplayMonitor  *monitor);
+ void              cc_display_monitor_get_geometry           (CcDisplayMonitor  *monitor,
+                                                              int               *x,
+diff --git a/panels/display/cc-display-settings.c b/panels/display/cc-display-settings.c
+index d793fccaacbbd55d194dbf1b1b83806efd535504..b62a45c0b8545f2cec67f647e7f33212dfb56bdb 100644
+--- a/panels/display/cc-display-settings.c
++++ b/panels/display/cc-display-settings.c
+@@ -51,6 +51,8 @@ struct _CcDisplaySettings
+   GtkWidget        *scale_row;
+   GtkWidget        *underscanning_row;
+   GtkWidget        *underscanning_switch;
++  GtkWidget        *variable_refresh_rate_row;
++  GtkWidget        *variable_refresh_rate_switch;
+ };
+ 
+ typedef struct _CcDisplaySettings CcDisplaySettings;
+@@ -243,6 +245,7 @@ cc_display_settings_rebuild_ui (CcDisplaySettings *self)
+       gtk_widget_set_visible (self->resolution_row, FALSE);
+       gtk_widget_set_visible (self->scale_row, FALSE);
+       gtk_widget_set_visible (self->underscanning_row, FALSE);
++      gtk_widget_set_visible (self->variable_refresh_rate_row, FALSE);
+ 
+       return G_SOURCE_REMOVE;
+     }
+@@ -251,6 +254,7 @@ cc_display_settings_rebuild_ui (CcDisplaySettings *self)
+   g_object_freeze_notify ((GObject*) self->refresh_rate_row);
+   g_object_freeze_notify ((GObject*) self->resolution_row);
+   g_object_freeze_notify ((GObject*) self->underscanning_switch);
++  g_object_freeze_notify ((GObject*) self->variable_refresh_rate_switch);
+ 
+   cc_display_monitor_get_geometry (self->selected_output, NULL, NULL, &width, &height);
+ 
+@@ -435,11 +439,18 @@ cc_display_settings_rebuild_ui (CcDisplaySettings *self)
+   gtk_switch_set_active (GTK_SWITCH (self->underscanning_switch),
+                          cc_display_monitor_get_underscanning (self->selected_output));
+ 
++  gtk_widget_set_visible (self->variable_refresh_rate_row,
++                          cc_display_monitor_supports_variable_refresh_rate (self->selected_output) &&
++                          !cc_display_config_is_cloning (self->config));
++  gtk_switch_set_active (GTK_SWITCH (self->variable_refresh_rate_switch),
++                         cc_display_monitor_get_variable_refresh_rate (self->selected_output));
++
+   self->updating = TRUE;
+   g_object_thaw_notify ((GObject*) self->orientation_row);
+   g_object_thaw_notify ((GObject*) self->refresh_rate_row);
+   g_object_thaw_notify ((GObject*) self->resolution_row);
+   g_object_thaw_notify ((GObject*) self->underscanning_switch);
++  g_object_thaw_notify ((GObject*) self->variable_refresh_rate_switch);
+   self->updating = FALSE;
+ 
+   return G_SOURCE_REMOVE;
+@@ -554,6 +565,21 @@ on_underscanning_switch_active_changed_cb (GtkWidget         *widget,
+   g_signal_emit_by_name (G_OBJECT (self), "updated", self->selected_output);
+ }
+ 
++static void
++on_variable_refresh_rate_switch_active_changed_cb (GtkWidget         *widget,
++                                                   GParamSpec        *pspec,
++                                                   CcDisplaySettings *self)
++{
++  if (self->updating)
++    return;
++
++  cc_display_monitor_set_variable_refresh_rate (self->selected_output,
++                                                gtk_switch_get_active (GTK_SWITCH (self->variable_refresh_rate_switch)));
++
++  g_signal_emit_by_name (G_OBJECT (self), "updated", self->selected_output);
++}
++
++
+ static void
+ cc_display_settings_get_property (GObject    *object,
+                                   guint       prop_id,
+@@ -673,11 +699,14 @@ cc_display_settings_class_init (CcDisplaySettingsClass *klass)
+   gtk_widget_class_bind_template_child (widget_class, CcDisplaySettings, scale_row);
+   gtk_widget_class_bind_template_child (widget_class, CcDisplaySettings, underscanning_row);
+   gtk_widget_class_bind_template_child (widget_class, CcDisplaySettings, underscanning_switch);
++  gtk_widget_class_bind_template_child (widget_class, CcDisplaySettings, variable_refresh_rate_row);
++  gtk_widget_class_bind_template_child (widget_class, CcDisplaySettings, variable_refresh_rate_switch);
+ 
+   gtk_widget_class_bind_template_callback (widget_class, on_orientation_selection_changed_cb);
+   gtk_widget_class_bind_template_callback (widget_class, on_refresh_rate_selection_changed_cb);
+   gtk_widget_class_bind_template_callback (widget_class, on_resolution_selection_changed_cb);
+   gtk_widget_class_bind_template_callback (widget_class, on_underscanning_switch_active_changed_cb);
++  gtk_widget_class_bind_template_callback (widget_class, on_variable_refresh_rate_switch_active_changed_cb);
+ }
+ 
+ static void
+diff --git a/panels/display/cc-display-settings.ui b/panels/display/cc-display-settings.ui
+index 50ef951b45f40739c34f0d7df832de1bcdfced4f..2acf0266992fc295935e2458fb1313eb18d57126 100644
+--- a/panels/display/cc-display-settings.ui
++++ b/panels/display/cc-display-settings.ui
+@@ -51,6 +51,23 @@
+         </child>
+       </object>
+     </child>
++    <child>
++      <object class="HdyActionRow" id="variable_refresh_rate_row">
++        <property name="width_request">100</property>
++        <property name="visible">True</property>
++        <property name="can_focus">True</property>
++        <property name="title" translatable="yes">Variable Refresh Rate</property>
++        <child type="action">
++          <object class="GtkSwitch" id="variable_refresh_rate_switch">
++            <property name="visible">True</property>
++            <property name="can_focus">False</property>
++            <property name="halign">end</property>
++            <property name="valign">center</property>
++            <signal name="notify::active" handler="on_variable_refresh_rate_switch_active_changed_cb" swapped="no"/>
++          </object>
++        </child>
++      </object>
++    </child>
+     <child>
+       <object class="HdyActionRow" id="scale_row">
+         <property name="width_request">100</property>
